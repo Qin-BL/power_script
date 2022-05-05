@@ -1,0 +1,5 @@
+wheel
+readline
+requests
+pyinstaller
+argparse

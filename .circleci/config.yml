@@ -1,0 +1,195 @@
+# Shell CircleCI 2.1 configuration file
+version: 2.1
+orbs:
+  build-tools: circleci/build-tools@2.9.1
+commands:
+  deploy:
+    description: command to deploy
+    parameters:
+      release_env:
+        type: string
+        default: "prod"
+
+    steps:
+      - checkout
+      - run:
+          name: upload to zeno
+          command: |
+          ZENO_ENV=<< parameters.release_env >>
+            URL=`echo $zeno | ZENO_ENV="$ZENO_ENV" jq -r '.[env.ZENO_ENV] | .url'`
+            USERNAME=`echo $zeno | ZENO_ENV="$ZENO_ENV" jq -r '.[env.ZENO_ENV] | .username'`
+            PASSWORD=`echo $zeno | ZENO_ENV="$ZENO_ENV" jq -r '.[env.ZENO_ENV] | .password'`
+            ENDPOINT="https://$URL/api/v1/dist/internal/create"
+
+            FILETAR='power_manager'
+            VERSION=`cat VERSION`
+            echo $ENDPOINT
+            echo $FILETAR
+            echo "Uploading generated APK ..."
+            PROXY_ADDRESS="-x $proxy"
+            if [[ $ZENO_ENV != 'cn-test' && $ZENO_ENV != 'cn-dev' && $ZENO_ENV != 'cn' &&  $ZENO_ENV != 'wanda' ]]; then
+                 PROXY_ADDRESS=''
+            fi
+            curl  $PROXY_ADDRESS            \
+                  --user $USERNAME:$PASSWORD \
+                  --form service=power_manager \
+                  --form version="$VERSION" \
+                  --form system=generic \
+                  --form platform=generic \
+                  --form level=0 \
+                  --form local_file=@$FILETAR $ENDPOINT
+
+jobs:
+  build:
+    docker:
+      - image: circleci/python:3.6.9
+    working_directory: ~/repo
+
+    steps:
+      - checkout
+      - run:
+          command: |
+            .build/overwrite_versions.sh
+            python3 -m venv venv
+            . venv/bin/activate
+            pip install -r requirements.txt
+            pyinstaller -F power_manager.py
+
+  deploy-cn:
+    docker:
+      - image: circleci/python:3.6.9
+    steps:
+      - deploy:
+        release_env: cn
+
+  deploy-cn-dev:
+    docker:
+      - image: circleci/python:3.6.9
+    steps:
+      - deploy:
+          release_env: cn-dev
+
+  deploy-wanda:
+    docker:
+      - image: circleci/python:3.6.9
+    steps:
+      - deploy:
+          release_env: wanda
+
+  deploy-dev:
+    docker:
+      - image: circleci/python:3.6.9
+    steps:
+      - deploy:
+          release_env: dev
+
+  deploy-test:
+    docker:
+      - image: circleci/python:3.6.9
+    steps:
+      - deploy:
+          release_env: test
+
+  deploy-prod:
+    docker:
+      - image: circleci/python:3.6.9
+    steps:
+      - deploy:
+          release_env: prod
+
+workflows:
+  version: 2
+  build-and-deploy:
+    jobs:
+      - build:
+          context: turing_zeno
+          filters:
+            branches:
+              only:
+                - /.*/
+            tags:
+              only:
+                - /release-.*/
+
+      - deploy-approval-cn:
+          type: approval
+          requires:
+            - build
+          filters: &triggerBuild
+            branches:
+              only:
+                - /.*master/
+            tags:
+              only:
+                - /release-.*/
+      - deploy-cn:
+          context: turing_zeno
+          requires:
+            - deploy-approval-cn
+          filters: *triggerBuild
+
+      - deploy-approval-cn-dev:
+          type: approval
+          requires:
+            - build
+          filters: *triggerBuild
+      - deploy-cn-dev:
+          context: turing_zeno
+          requires:
+            - deploy-approval-cn-dev
+          filters: *triggerBuild
+
+      - deploy-approval-cn-test:
+          type: approval
+          requires:
+            - build
+          filters: *triggerBuild
+      - deploy-cn-test:
+          context: turing_zeno
+          requires:
+            - deploy-approval-cn-test
+          filters: *triggerBuild
+
+      - deploy-approval-wanda:
+          type: approval
+          requires:
+            - build
+          filters: *triggerBuild
+      - deploy-wanda:
+          context: turing_zeno
+          requires:
+            - deploy-approval-wanda
+          filters: *triggerBuild
+
+      - deploy-approval-dev:
+          type: approval
+          requires:
+            - build
+          filters: *triggerBuild
+      - deploy-dev:
+          context: turing_zeno
+          requires:
+            - deploy-approval-dev
+          filters: *triggerBuild
+
+      - deploy-approval-test:
+          type: approval
+          requires:
+            - build
+          filters: *triggerBuild
+      - deploy-test:
+          context: turing_zeno
+          requires:
+            - deploy-approval-test
+          filters: *triggerBuild
+
+      - deploy-approval-prod:
+          type: approval
+          requires:
+            - build
+          filters: *triggerBuild
+      - deploy-prod:
+          context: turing_zeno
+          requires:
+            - deploy-approval-prod
+          filters: *triggerBuild
